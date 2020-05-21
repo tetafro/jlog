@@ -10,4 +10,4 @@ go get -u github.com/tetafro/jlog
 
 ## Usage
 
-![pic](/pic.png)
+![screenshot](/screenshot.png)
