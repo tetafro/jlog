@@ -3,84 +3,22 @@ package main
 import (
 	"bufio"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/fatih/color"
-	"github.com/hokaccha/go-prettyjson"
 )
 
-// Flags for modifying input structs.
-var (
-	blacklistFlag = flag.String("b", "", "Black list of fields")
-	whitelistFlag = flag.String("w", "", "White list of fields")
-)
-
-// Formatters for different log levels.
-var (
-	debugFormat = prettyjson.Formatter{
-		KeyColor:    color.New(color.FgMagenta, color.Bold),
-		StringColor: color.New(color.FgWhite, color.Concealed),
-		BoolColor:   color.New(color.FgWhite, color.Concealed),
-		NumberColor: color.New(color.FgWhite, color.Concealed),
-		NullColor:   color.New(color.FgWhite, color.Concealed),
-		Indent:      4,
-		Newline:     "\n",
-	}
-	infoFormat = prettyjson.Formatter{
-		KeyColor:    color.New(color.FgBlue, color.Bold),
-		StringColor: color.New(color.FgWhite, color.Concealed),
-		BoolColor:   color.New(color.FgWhite, color.Concealed),
-		NumberColor: color.New(color.FgWhite, color.Concealed),
-		NullColor:   color.New(color.FgWhite, color.Concealed),
-		Indent:      4,
-		Newline:     "\n",
-	}
-	warnFormat = prettyjson.Formatter{
-		KeyColor:    color.New(color.FgYellow, color.Bold),
-		StringColor: color.New(color.FgWhite, color.Concealed),
-		BoolColor:   color.New(color.FgWhite, color.Concealed),
-		NumberColor: color.New(color.FgWhite, color.Concealed),
-		NullColor:   color.New(color.FgWhite, color.Concealed),
-		Indent:      4,
-		Newline:     "\n",
-	}
-	errorFormat = prettyjson.Formatter{
-		KeyColor:    color.New(color.FgRed, color.Bold),
-		StringColor: color.New(color.FgWhite, color.Concealed),
-		BoolColor:   color.New(color.FgWhite, color.Concealed),
-		NumberColor: color.New(color.FgWhite, color.Concealed),
-		NullColor:   color.New(color.FgWhite, color.Concealed),
-		Indent:      4,
-		Newline:     "\n",
-	}
-	defaultFormat = prettyjson.Formatter{
-		DisabledColor: true,
-		Indent:        4,
-		Newline:       "\n",
-	}
-)
+// started is a flag that indicates, that the first line was processed,
+// and all further lines need a separator "--".
+var started = false
 
 func main() {
-	flag.Parse()
-
-	blacklist := strings.Split(*blacklistFlag, ",")
-	whitelist := strings.Split(*whitelistFlag, ",")
-
-	if len(blacklist) == 1 && blacklist[0] == "" {
-		blacklist = []string{}
-	}
-	if len(whitelist) == 1 && whitelist[0] == "" {
-		whitelist = []string{}
-	}
-
-	if len(blacklist) > 0 && len(whitelist) > 0 {
-		fmt.Printf("Use only -b or -w flag, not both [%v, %v]\n", blacklist, whitelist)
-		os.Exit(1)
-	}
+	go handleSignals()
 
 	reader := bufio.NewReader(os.Stdin)
 	for {
@@ -93,40 +31,35 @@ func main() {
 			os.Exit(1)
 		}
 		text = strings.TrimSpace(text)
-
-		fmt.Println(format(text, blacklist, whitelist))
+		display(text)
 	}
 }
 
-func format(s string, blacklist, whitelist []string) string {
-	var m map[string]interface{}
-	if err := json.Unmarshal([]byte(s), &m); err != nil {
-		return s
+func display(s string) {
+	if started {
+		fmt.Println("--")
+	} else {
+		started = true
 	}
 
-	for _, bk := range blacklist {
-		delete(m, bk)
-	}
-	if len(whitelist) > 0 {
-		tmp := map[string]interface{}{}
-		for _, wk := range whitelist {
-			tmp[wk] = m[wk]
-		}
-		m = tmp
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(s), &m); err != nil {
+		fmt.Println(s)
+		return
 	}
 
 	level := getLevel(m)
-	fmtr := getFormatter(level)
+	keyColor, txtColor := getColors(level)
+	fields := getFields(m)
 
-	f, err := fmtr.Marshal(m)
-	if err != nil {
-		return s
+	for _, field := range fields {
+		keyColor.Printf("%s: ", field)
+		txtColor.Println(m[field])
 	}
-	return string(f)
 }
 
 func getLevel(msg map[string]interface{}) string {
-	for _, k := range []string{"level", "lvl", "lev", "l"} {
+	for _, k := range []string{"level", "lvl", "lev", "l", "type"} {
 		if val, ok := msg[k]; ok {
 			if level, ok := val.(string); ok {
 				return level
@@ -136,16 +69,67 @@ func getLevel(msg map[string]interface{}) string {
 	return ""
 }
 
-func getFormatter(level string) prettyjson.Formatter {
+func getColors(level string) (*color.Color, *color.Color) {
 	switch strings.ToLower(level) {
 	case "debug", "dbg", "d":
-		return debugFormat
+		return color.New(color.FgMagenta), color.New(color.FgWhite)
 	case "info", "inf", "i":
-		return infoFormat
+		return color.New(color.FgBlue), color.New(color.FgWhite)
 	case "warning", "warn", "wrn", "w":
-		return warnFormat
+		return color.New(color.FgYellow), color.New(color.FgWhite)
 	case "error", "err", "e":
-		return errorFormat
+		return color.New(color.FgRed), color.New(color.FgWhite)
+	case "fatal", "f":
+		return color.New(color.FgRed), color.New(color.FgWhite)
+	default:
+		return color.New(color.FgWhite), color.New(color.FgWhite)
 	}
-	return defaultFormat
+}
+
+func getFields(m map[string]interface{}) []string {
+	// Determine order of fields - some fields should always be on top,
+	// other - always at bottom
+	firstFields := []string{"time", "level", "type"}
+	lastFields := []string{"message"}
+	blacklistedFields := []string{"lineno", "function", "env", "tag"}
+
+	var fields []string
+
+	for _, f := range firstFields {
+		if _, ok := m[f]; ok {
+			fields = append(fields, f)
+		}
+	}
+
+	for f := range m {
+		if in(f, blacklistedFields) || in(f, firstFields) || in(f, lastFields) {
+			continue
+		}
+		fields = append(fields, f)
+	}
+
+	for _, f := range lastFields {
+		if _, ok := m[f]; ok {
+			fields = append(fields, f)
+		}
+	}
+
+	return fields
+}
+
+func in(str string, ss []string) bool {
+	for _, s := range ss {
+		if str == s {
+			return true
+		}
+	}
+	return false
+}
+
+func handleSignals() {
+	trap := make(chan os.Signal, 1)
+	signal.Notify(trap, syscall.SIGINT, os.Interrupt, syscall.SIGTERM)
+	for range trap {
+		// Do nothing
+	}
 }
