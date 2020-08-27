@@ -2,6 +2,7 @@ use std::io;
 use std::{error::Error, thread};
 use std::collections::HashMap;
 
+use chrono::DateTime;
 use colored::*;
 use serde_json as json;
 use signal_hook::{iterator::Signals, SIGINT, SIGTERM};
@@ -35,13 +36,18 @@ fn display(line: &str) {
 
     for key in fields {
         // Unpack string to remove quotes
-        let value = match parsed.get(&key) {
+        let mut value = match parsed.get(&key) {
             Some(v) => match v {
                 json::Value::String(s) => format!("{}", s),
                 _ => format!("{}", v),
             },
             None => continue, // this should never happen
         };
+        // Reformat time
+        if key == "time" {
+            value = format_time(value);
+        }
+        // Print
         println!("{}{}{}",
             key.color(key_color),
             ": ".color(key_color),
@@ -116,6 +122,13 @@ fn get_fields(m: &HashMap<String, json::Value>) -> Vec<String> {
     }
 
     return fields;
+}
+
+fn format_time(time: String) -> String {
+    match DateTime::parse_from_rfc3339(&time) {
+        Ok(t) => return format!("{}", t.format("%H:%M:%S")),
+        Err(_) => return time,
+    }
 }
 
 // Catch signals and do nothing - program should quit only on
