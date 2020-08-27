@@ -86,9 +86,9 @@ fn get_colors(level: Option<String>) -> (Color, Color) {
 }
 
 fn get_fields(m: &HashMap<String, json::Value>) -> Vec<String> {
-    let first_fields = ["time", "level", "type"];
+    let first_fields = ["time"];
     let last_fields = ["message"];
-    let blacklisted_fields = ["lineno", "function", "env", "tag"];
+    let blacklisted_fields = ["level", "type", "lineno", "function", "env", "tag"];
 
     let mut fields: Vec<String> = vec![];
 
